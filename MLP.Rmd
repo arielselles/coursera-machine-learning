@@ -102,11 +102,7 @@ predRPart <- predict(modRPart, testing_cleaned)
 table(testing_cleaned$user_name, predRPart)
 ```
 
-These are the same shown in the previous plot. The detailed predictions are the following:
-
-```{r detailed predictions}
-data.frame(testing_cleaned[,c("problem_id", "user_name")], predRPart)
-```
+These are the same shown in the previous plot.
 
 ## Modeling without timestamp variables
 
