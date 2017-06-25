@@ -1,0 +1,216 @@
+---
+title: "Machine Learning Assignment"
+author: "Ariel Selles"
+date: "June 23th, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Synopsis
+
+The purpose of the present project is to find out a model to predict the way that the subject did exercise. Details of the origin of the data are described at http://groupware.les.inf.puc-rio.br/har, section *Weight Lifting Exercise Dataset*; as a summary, the data comes from 6 people who made weight lifting exercise in five ways, one correct and four incorrect, trained by some experts on the matter to assure that the data was correctly stored. The data were recorded by four devices located on several parts of their bodies.
+
+## Exploring data
+
+```{r loading}
+library(caret)
+training <- read.csv("./pml-training.csv")
+testing <- read.csv("./pml-testing.csv")
+set.seed(936435)
+```
+
+Both datasets have 160 variables.
+
+```{r exploring dimensions}
+dim(training)
+dim(testing)
+```
+
+They are all the same, except the last, which is *classe* in the training dataset, and *problem_id* in the testing one.
+
+```{r exploring names}
+names(training)
+names(testing)
+```
+
+Moreover, the testing dataset is full of NAs, which could be annoying to make good predictions.
+
+```{r exploring NAS}
+print(testing[1,])
+```
+
+We can add to the exploration that there are three date-time variables, *raw_timestamp_part_1*, *raw_timestamp_part_2* and *cvtd_timestamp*.
+
+## Cleaning data
+
+The last step before start modeling will be removing all variables with NAs in the testing dataset, and adding to each dataset the missing variable.
+
+```{r cleaning NAs}
+# Remove NAs and add "classe" to testing dataset
+testing_cleaned <- data.frame(testing[, !apply(is.na(testing), 2, all)],
+                              classe = rep(NA, nrow(testing)))
+
+# Add "problem_id" to training ...
+training_cleaned <- data.frame(training, problem_id = rep(NA, nrow(training)))
+
+# ... and remove the same variables than the removed for testing
+training_cleaned <- training_cleaned[,names(testing_cleaned)]
+```
+
+## Modeling with one timestamp variable
+
+From the data info in the original publication, we guess that testing data is obtained by picking 20 records from the original dataset; this would mean that timestamp fields will help to  predict the *classe* values for the testing records. Look at it in the following plot:  
+
+```{r plot analysis 1 variable}
+# Choose unique user names
+usrs <- sort(unique(training$user_name))
+par(mfrow=c(2,3))
+for (i in 1:6) {
+    # Ploting user data separatedly
+    usr = usrs[i]
+    tr2 <- training_cleaned[training_cleaned$user_name==usr,]
+    plot(tr2$raw_timestamp_part_1, 
+         tr2$X, 
+         col=tr2$classe, 
+         pch=19,
+         cex=.5,
+         xlab = "timesamp", 
+         ylab = "# record", 
+         main = usr)
+    
+    # Plot a vertical line for each testing record at the related timestamp
+    tt2 <- testing_cleaned[testing_cleaned$user_name==usr,]
+    abline(v=tt2$raw_timestamp_part_1, col='gray')
+}
+```
+
+Following, we are going to model this pattern with the classification *Recursive Partitioning and Regression Trees* algorithm.
+
+```{r model rpart var timestamp}
+# Modeling with rpart method for 1 predictor
+modRPart <- train(classe ~ raw_timestamp_part_1, method="rpart", data = training_cleaned)
+modRPart
+```
+
+The accuracy for this model is *0.99*. Let's predict the *classe* values:
+
+```{r predict rpart var timestamp}
+predRPart <- predict(modRPart, testing_cleaned)
+table(testing_cleaned$user_name, predRPart)
+```
+
+These are the same shown in the previous plot. The detailed predictions are the following:
+
+```{r detailed predictions}
+data.frame(testing_cleaned[,c("problem_id", "user_name")], predRPart)
+```
+
+## Modeling without timestamp variables
+
+In the author's opinion, it doesn't seem that the aim of the project was to do some model based on movement variables. Therefore, we are going to try some more models without these timestamp variables, hoping being able to predict something similar.
+
+We start by choosing the movement variables plus *user_name*, *classe* and *X*.
+
+```{r anal Movement vars}
+dataMov <- training_cleaned[,grep('^(?:.*(?:gyros|accel|magnet).*$|user_name|classe|X)$', 
+                                  names(training_cleaned))]
+```
+
+### Modeling by k-Nearest Neighbourgh
+
+```{r model knn movement vars, cache=TRUE}
+# Control
+ctrl <- trainControl(method="repeatedcv", 
+                     number=10,
+                     repeats = 3)
+
+# Model
+modKnn <- train(classe ~ ., 
+                data = dataMov, 
+                method = "knn", 
+                trControl = ctrl, 
+                preProcess = c("center","scale"), 
+                tuneLength = 2)
+
+#Result
+modKnn
+```
+
+The accuracy of this model is 0.98. The prediction is the following:
+
+```{r prediction knn movement vars}
+# Prediction
+predKnn <- predict(modKnn, testing_cleaned)
+table(testing_cleaned$user_name, predKnn)
+```
+
+And this is the comparison with the 1-variable prediction:
+
+```{r CM knn movement vars}
+confusionMatrix(predKnn, predRPart)
+```
+
+### Modeling by Random Forest
+
+```{r model rf movement vars, cache=TRUE}
+# Model
+metric <- "Accuracy"
+mtry <- sqrt(ncol(dataMov))
+tunegrid <- expand.grid(.mtry=mtry)
+modRf <- train(classe ~ ., 
+               data = dataMov, 
+               method = "rf", 
+               trControl = ctrl, 
+               tuneGrid=tunegrid)
+modRf
+```
+
+The accuracy of this model is 1. The prediction is the following:
+
+```{r prediction rf movement vars}
+# Prediction
+predRf <- predict(modRf, testing_cleaned)
+table(testing_cleaned$user_name, predRf)
+```
+
+We finish the analysis of this model by comparing it with the 1-variable prediction:
+
+```{r CM rf movement vars}
+confusionMatrix(predRf, predRPart)
+```
+
+### Modeling by Recursive Partitioning and Regression Trees
+
+```{r model rpart movement vars, cache=TRUE}
+# Model
+metric <- "Accuracy"
+mtry <- sqrt(ncol(dataMov))
+tunegrid <- expand.grid(.mtry=mtry)
+modRPartAll <- train(classe ~ ., 
+               data = dataMov, 
+               method = "rpart")
+modRPartAll
+```
+
+The accuracy of this model is 0.74. The prediction is the following:
+
+```{r prediction rpart movement vars}
+# Prediction
+predRPartAll <- predict(modRPartAll, testing_cleaned)
+table(testing_cleaned$user_name, predRPartAll)
+```
+
+Again, we compare it with the 1-variable prediction:
+
+```{r CM rpart movement vars}
+confusionMatrix(predRPartAll, predRPart)
+```
+
+## Conclusion
+
+Looking at the results obtained with the dataset without timestamp variables, the author concludes that the better the data knowledge is, the more accurated the model could be.
+
+Due to the fact that the records have information about the user movements allong the time, it is easy to guess that although the user was doing the exercise in differents ways, at some moment the devices records could be the same or very close; this is in my opinion the main reason because the results taking into account the timestamp variable are so far from the others.
